@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Runner Game</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            /* Dark blue theme background */
+            background-color: #0a192f; /* Navy Blue */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ccd6f6; /* Light blue text */
+            overflow: hidden; /* Prevent scrollbars */
+        }
+
+        #gameContainer {
+            text-align: center;
+            position: relative; /* Needed for absolute positioning of messages */
+        }
+
+        canvas {
+            display: block;
+            /* Slightly lighter blue for the canvas background */
+            background-color: #112240; /* Darker Navy */
+            border: 2px solid #64ffda; /* Teal border */
+            border-radius: 8px; /* Rounded corners */
+            box-shadow: 0 0 15px rgba(100, 255, 218, 0.3); /* Subtle glow */
+        }
+
+        /* Common styles for messages */
+        #instructions, #gameOverMessage, #scoreDisplay, #complimentMessage {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ccd6f6;
+            background-color: rgba(17, 34, 64, 0.8); /* Semi-transparent darker navy */
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 1.2em;
+            text-align: center;
+            z-index: 10; /* Ensure messages are on top */
+        }
+
+        #instructions {
+            top: 20px;
+        }
+
+        #gameOverMessage {
+            top: 50%;
+            transform: translate(-50%, -50%);
+            display: none; /* Hidden by default */
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ff6b6b; /* Reddish color for game over */
+        }
+
+         #gameOverMessage span {
+            display: block;
+            font-size: 0.7em;
+            margin-top: 10px;
+            font-weight: normal;
+            color: #ccd6f6; /* Light blue for restart text */
+        }
+
+        #scoreDisplay {
+            top: 20px;
+            right: 20px;
+            left: auto; /* Override absolute positioning */
+            transform: none; /* Override absolute positioning */
+            background: none; /* No background for score */
+            padding: 0;
+        }
+
+        /* Style for the compliment message */
+        #complimentMessage {
+            top: 60px; /* Position below instructions/score */
+            display: none; /* Hidden by default */
+            color: #50fa7b; /* Bright green for compliments */
+            background-color: rgba(40, 42, 54, 0.8); /* Slightly different background */
+            transition: opacity 0.5s ease-out; /* Fade out effect */
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="300"></canvas>
+        <div id="instructions">Press Space or Click to Jump</div>
+        <div id="scoreDisplay">Score: 0</div>
+        <div id="complimentMessage"></div> {/* Added compliment display */}
+        <div id="gameOverMessage">
+            Game Over!
+            <span>Click or Press Space to Restart</span>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const instructions = document.getElementById('instructions');
+        const gameOverMessage = document.getElementById('gameOverMessage');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const complimentMessage = document.getElementById('complimentMessage'); // Get compliment element
+
+        // --- Game Constants ---
+        // Adjusted player size slightly for the drawing
+        const PLAYER_WIDTH = 40;
+        const PLAYER_HEIGHT = 60;
+        const GROUND_HEIGHT = canvas.height - 50; // Y position of the ground
+        const PLAYER_BODY_COLOR = '#64ffda'; // Teal player body
+        const PLAYER_HAT_COLOR = '#ff79c6'; // Pink hat
+        const OBSTACLE_COLOR = '#ff6b6b'; // Reddish obstacles
+        const GROUND_COLOR = '#8892b0'; // Slate color for ground line
+        const GRAVITY = 0.6;
+        const JUMP_FORCE = -12; // Keep jump force consistent
+        const OBSTACLE_MIN_WIDTH = 20;
+        const OBSTACLE_MAX_WIDTH = 40;
+        const OBSTACLE_MIN_HEIGHT = 30;
+        const OBSTACLE_MAX_HEIGHT = 60;
+        const OBSTACLE_SPEED = 5;
+        const MIN_OBSTACLE_SPAWN_INTERVAL = 80; // Minimum frames between obstacles
+        const MAX_OBSTACLE_SPAWN_INTERVAL = 150; // Maximum frames between obstacles
+        const COMPLIMENT_DURATION = 1500; // milliseconds (1.5 seconds)
+
+        // --- Game Variables ---
+        let player;
+        let obstacles = [];
+        let score = 0;
+        let frameCount = 0;
+        let nextObstacleSpawnFrame;
+        let gameRunning = false;
+        let jumpActive = false;
+        let complimentTimeout = null; // To manage hiding the compliment
+
+        // --- Compliments Array ---
+        const compliments = [
+            "Nice Jump!", "Wow!", "Great Job!", "Amazing!", "Super!",
+            "Excellent!", "Keep it up!", "Smooth!", "Awesome!"
+        ];
+
+        // --- Player Object ---
+        class Player {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.baseY = y; // Store the initial Y to help with drawing coordinates
+                this.width = width; // Bounding box width
+                this.height = height; // Bounding box height
+                this.velocityY = 0;
+                this.isGrounded = true;
+            }
+
+            // Draw a simple stick figure with a funny hat
+            draw() {
+                const headRadius = 10;
+                const bodyHeight = 25;
+                const legHeight = 15;
+                const hatHeight = 10;
+                const hatWidth = 15;
+
+                // Calculate positions relative to the player's bounding box bottom-center
+                const feetY = this.y + this.height;
+                const bodyTopY = feetY - legHeight - bodyHeight;
+                const headCenterY = bodyTopY - headRadius;
+                const centerX = this.x + this.width / 2;
+
+                ctx.lineWidth = 3;
+
+                // Legs (simple lines)
+                ctx.strokeStyle = PLAYER_BODY_COLOR;
+                ctx.beginPath();
+                ctx.moveTo(centerX, bodyTopY + bodyHeight); // Hip joint
+                ctx.lineTo(centerX - 5, feetY); // Left foot
+                ctx.moveTo(centerX, bodyTopY + bodyHeight); // Hip joint
+                ctx.lineTo(centerX + 5, feetY); // Right foot
+                ctx.stroke();
+
+                // Body (simple line)
+                ctx.beginPath();
+                ctx.moveTo(centerX, bodyTopY + bodyHeight);
+                ctx.lineTo(centerX, bodyTopY);
+                ctx.stroke();
+
+                // Arms (simple lines)
+                ctx.beginPath();
+                ctx.moveTo(centerX, bodyTopY + 5); // Shoulder area
+                ctx.lineTo(centerX - 15, bodyTopY + 15); // Left hand
+                ctx.moveTo(centerX, bodyTopY + 5); // Shoulder area
+                ctx.lineTo(centerX + 15, bodyTopY + 15); // Right hand
+                ctx.stroke();
+
+                // Head (circle)
+                ctx.fillStyle = PLAYER_BODY_COLOR;
+                ctx.beginPath();
+                ctx.arc(centerX, headCenterY, headRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Funny Hat (e.g., a simple top hat)
+                ctx.fillStyle = PLAYER_HAT_COLOR;
+                // Brim
+                ctx.fillRect(centerX - hatWidth, headCenterY - headRadius - 2, hatWidth * 2, 4);
+                // Top part
+                ctx.fillRect(centerX - hatWidth / 2, headCenterY - headRadius - 2 - hatHeight, hatWidth, hatHeight);
+
+                 // --- Uncomment to draw bounding box for debugging ---
+                // ctx.strokeStyle = 'red';
+                // ctx.lineWidth = 1;
+                // ctx.strokeRect(this.x, this.y, this.width, this.height);
+                // --- End Debug ---
+            }
+
+            applyGravity() {
+                this.velocityY += GRAVITY;
+                this.y += this.velocityY;
+            }
+
+            jump() {
+                if (this.isGrounded) {
+                    this.velocityY = JUMP_FORCE;
+                    this.isGrounded = false;
+                    jumpActive = true; // Track that a jump was initiated
+                }
+            }
+
+            update() {
+                this.applyGravity();
+
+                // Prevent falling through the ground
+                if (this.y + this.height > GROUND_HEIGHT) {
+                    this.y = GROUND_HEIGHT - this.height;
+                    this.velocityY = 0;
+                    this.isGrounded = true;
+                    jumpActive = false; // Reset jump flag when grounded
+                }
+
+                this.draw();
+            }
+        }
+
+        // --- Obstacle Object ---
+        class Obstacle {
+            constructor(x, y, width, height, color, speed) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+                this.speed = speed;
+                this.passed = false; // Flag to track if player passed it
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = '#0a192f'; // Outline for visibility
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+
+            update() {
+                this.x -= this.speed;
+                this.draw();
+            }
+        }
+
+        // --- Utility Functions ---
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        function spawnObstacle() {
+            const width = getRandomInt(OBSTACLE_MIN_WIDTH, OBSTACLE_MAX_WIDTH);
+            const height = getRandomInt(OBSTACLE_MIN_HEIGHT, OBSTACLE_MAX_HEIGHT);
+            const y = GROUND_HEIGHT - height; // Place obstacle on the ground
+            const x = canvas.width; // Start off-screen to the right
+            obstacles.push(new Obstacle(x, y, width, height, OBSTACLE_COLOR, OBSTACLE_SPEED));
+            // Set the frame count for the next spawn
+            nextObstacleSpawnFrame = frameCount + getRandomInt(MIN_OBSTACLE_SPAWN_INTERVAL, MAX_OBSTACLE_SPAWN_INTERVAL);
+        }
+
+        function checkCollision(player, obstacle) {
+            // Simple AABB collision detection using player's bounding box
+            return (
+                player.x < obstacle.x + obstacle.width &&
+                player.x + player.width > obstacle.x &&
+                player.y < obstacle.y + obstacle.height &&
+                player.y + player.height > obstacle.y
+            );
+        }
+
+        function drawGround() {
+            ctx.strokeStyle = GROUND_COLOR;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, GROUND_HEIGHT);
+            ctx.lineTo(canvas.width, GROUND_HEIGHT);
+            ctx.stroke();
+        }
+
+        function updateScore() {
+            // Score increases over time
+            score++;
+            scoreDisplay.textContent = `Score: ${score}`;
+        }
+
+        // --- Compliment Display Function ---
+        function displayCompliment() {
+            // Clear any existing timeout
+            if (complimentTimeout) {
+                clearTimeout(complimentTimeout);
+            }
+
+            // Select a random compliment
+            const randomIndex = getRandomInt(0, compliments.length - 1);
+            complimentMessage.textContent = compliments[randomIndex];
+            complimentMessage.style.opacity = 1; // Make sure it's visible
+            complimentMessage.style.display = 'block';
+
+            // Set a timeout to hide the message
+            complimentTimeout = setTimeout(() => {
+                complimentMessage.style.opacity = 0;
+                // Optionally hide completely after fade out
+                setTimeout(() => {
+                     if (complimentMessage.style.opacity === '0') { // Check if it wasn't replaced
+                        complimentMessage.style.display = 'none';
+                     }
+                }, 500); // Match CSS transition duration
+            }, COMPLIMENT_DURATION);
+        }
+
+
+        function resetGame() {
+            // Use the adjusted player height for positioning
+            player = new Player(50, GROUND_HEIGHT - PLAYER_HEIGHT, PLAYER_WIDTH, PLAYER_HEIGHT);
+            obstacles = [];
+            score = 0;
+            frameCount = 0;
+            nextObstacleSpawnFrame = getRandomInt(MIN_OBSTACLE_SPAWN_INTERVAL, MAX_OBSTACLE_SPAWN_INTERVAL); // Initial spawn
+            gameRunning = true;
+            jumpActive = false;
+            gameOverMessage.style.display = 'none';
+            instructions.style.display = 'none'; // Hide instructions once started
+            complimentMessage.style.display = 'none'; // Hide compliment message
+             if (complimentTimeout) {
+                clearTimeout(complimentTimeout); // Clear any pending compliment hide
+                complimentTimeout = null;
+            }
+            scoreDisplay.textContent = `Score: 0`;
+            gameLoop(); // Start the loop again
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            gameOverMessage.style.display = 'block';
+             if (complimentTimeout) {
+                clearTimeout(complimentTimeout);
+                complimentMessage.style.display = 'none'; // Hide compliment on game over
+            }
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (!gameRunning) return; // Stop the loop if game is over
+
+            requestAnimationFrame(gameLoop);
+            ctx.fillStyle = '#112240';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawGround();
+            player.update();
+            frameCount++;
+
+            // Spawn obstacles
+            if (frameCount >= nextObstacleSpawnFrame) {
+                spawnObstacle();
+            }
+
+            // Update, draw, check collision, and check for passed obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                obstacle.update();
+
+                // Check for collision FIRST
+                if (checkCollision(player, obstacle)) {
+                    gameOver();
+                    return; // Exit loop immediately on collision
+                }
+
+                // Check if player successfully passed the obstacle
+                // Condition: Obstacle's right edge is past player's front edge AND it hasn't been marked as passed yet
+                 if (!obstacle.passed && obstacle.x + obstacle.width < player.x) {
+                    obstacle.passed = true;
+                    displayCompliment(); // Show a compliment!
+                    // Note: Score could also be increased here per obstacle instead of time
+                }
+
+
+                // Remove obstacles that are off-screen
+                if (obstacle.x + obstacle.width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            updateScore(); // Update score based on time
+        }
+
+        // --- Event Listeners ---
+        function handleInput() {
+            if (!gameRunning) {
+                resetGame(); // Start/Restart game on input
+            } else if (player.isGrounded || !jumpActive) {
+                player.jump();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                 e.preventDefault(); // Prevent space bar from scrolling the page
+                 handleInput();
+            }
+        });
+
+        canvas.addEventListener('click', handleInput);
+        gameOverMessage.addEventListener('click', handleInput);
+
+
+        // --- Initial Setup ---
+        function initializeDisplay() {
+            ctx.fillStyle = '#112240';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawGround();
+            // Draw initial player state
+            const initialPlayer = new Player(50, GROUND_HEIGHT - PLAYER_HEIGHT, PLAYER_WIDTH, PLAYER_HEIGHT);
+            initialPlayer.draw();
+            instructions.style.display = 'block';
+            complimentMessage.style.display = 'none'; // Ensure hidden initially
+        }
+
+        // Initialize the display when the script loads
+        initializeDisplay();
+
+    </script>
+</body>
+</html>
